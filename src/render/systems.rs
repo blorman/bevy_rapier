@@ -3,7 +3,7 @@ use crate::physics::RapierConfiguration;
 use crate::render::ColliderDebugRender;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, VertexAttributeValues};
-use rapier::geometry::ShapeType;
+use rapier::geometry::{ShapeType, TriMesh};
 
 #[cfg(feature = "dim2")]
 use bevy::sprite::MaterialMesh2dBundle;
@@ -93,17 +93,84 @@ fn generate_collider_mesh(co_shape: &ColliderShapeComponent) -> Option<(Mesh, Ve
             radius: 1.0,
         }),
         #[cfg(feature = "dim2")]
-        ShapeType::TriMesh => {
+        ShapeType::Capsule => {
+            let capsule = co_shape.as_capsule().unwrap();
+
+            let mut mesh = Mesh::from(shape::Icosphere {
+                subdivisions: 2,
+                radius: capsule.radius,
+            });
+
+            if let Some(VertexAttributeValues::Float32x3(vertices)) =
+                mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+            {
+                mesh.set_attribute(
+                    Mesh::ATTRIBUTE_POSITION,
+                    VertexAttributeValues::from(
+                        vertices
+                            .iter()
+                            .map(|vertice| {
+                                if vertice[0] > 0.0 {
+                                    [vertice[0] + capsule.half_height(), vertice[1], 0.0]
+                                } else {
+                                    [vertice[0] - capsule.half_height(), vertice[1], 0.0]
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
+                );
+            }
+
+            mesh
+        }
+        #[cfg(feature = "dim2")]
+        ShapeType::TriMesh | ShapeType::ConvexPolygon => {
             let mut mesh =
                 Mesh::new(bevy::render::render_resource::PrimitiveTopology::TriangleList);
-            let trimesh = co_shape.as_trimesh().unwrap();
+            let trimesh = if matches!(co_shape.shape_type(), ShapeType::TriMesh) {
+                co_shape.as_trimesh().unwrap().clone()
+            } else {
+                // ShapeType::ConvexPolygon
+                TriMesh::from_polygon(co_shape.as_convex_polygon().unwrap().points().to_vec())
+                    .unwrap()
+            };
+            // let trimesh = co_shape.as_trimesh().unwrap();
+            // println!("Trimesh");
+            // println!("  vertices:");
+            // for foo in trimesh.vertices() {
+            //     println!("    {}", foo);
+            // }
+            // println!("  indices:");
+            // for foo in trimesh.indices() {
+            //     println!("    {} {} {}", foo[0], foo[1], foo[2]);
+            // }
             mesh.set_attribute(
                 Mesh::ATTRIBUTE_POSITION,
                 VertexAttributeValues::from(
                     trimesh
                         .vertices()
                         .iter()
-                        .map(|vertice| [vertice.x, vertice.y])
+                        .map(|vertice| [vertice.x, vertice.y, 0.0])
+                        .collect::<Vec<_>>(),
+                ),
+            );
+            mesh.set_attribute(
+                Mesh::ATTRIBUTE_NORMAL,
+                VertexAttributeValues::from(
+                    trimesh
+                        .vertices()
+                        .iter()
+                        .map(|_vertex| [0.0, 0.0, 1.0])
+                        .collect::<Vec<_>>(),
+                ),
+            );
+            mesh.set_attribute(
+                Mesh::ATTRIBUTE_UV_0,
+                VertexAttributeValues::from(
+                    trimesh
+                        .vertices()
+                        .iter()
+                        .map(|_vertex| [0.0, 0.0])
                         .collect::<Vec<_>>(),
                 ),
             );
@@ -115,6 +182,7 @@ fn generate_collider_mesh(co_shape: &ColliderShapeComponent) -> Option<(Mesh, Ve
                     .cloned()
                     .collect(),
             )));
+
             mesh
         }
         #[cfg(feature = "dim3")]
@@ -185,6 +253,12 @@ fn generate_collider_mesh(co_shape: &ColliderShapeComponent) -> Option<(Mesh, Ve
             let c = co_shape.as_cuboid().unwrap();
             Vec3::new(c.half_extents.x, c.half_extents.y, 1.0)
         }
+        #[cfg(feature = "dim2")]
+        ShapeType::Capsule => {
+            // let c = co_shape.as_capsule().unwrap();
+            // Vec3::new(c.half_height(), c.radius, 1.0)
+            Vec3::ONE
+        }
         #[cfg(feature = "dim3")]
         ShapeType::Cuboid => {
             let c = co_shape.as_cuboid().unwrap();
@@ -194,7 +268,7 @@ fn generate_collider_mesh(co_shape: &ColliderShapeComponent) -> Option<(Mesh, Ve
             let b = co_shape.as_ball().unwrap();
             Vec3::new(b.radius, b.radius, b.radius)
         }
-        ShapeType::TriMesh => Vec3::ONE,
+        ShapeType::TriMesh | ShapeType::ConvexPolygon => Vec3::ONE,
         _ => unimplemented!(),
     };
 
